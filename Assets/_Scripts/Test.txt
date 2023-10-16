@@ -1,0 +1,230 @@
+// using System;
+// using System.Collections;
+// using System.Collections.Generic;
+using UnityEngine;
+using UnityEngine.UI;
+
+public class PlayerInput : PlayerAbstract
+{
+    protected static PlayerInput instance;
+    public static PlayerInput Instance => instance;
+
+    private Vector2 input;
+
+    public SpriteRenderer tileSelection;
+    public GameObject EInteractButton;
+    public GameObject previewCanvas;
+    public Image previewImage;
+
+    [SerializeField] protected MouseTarget target;
+    protected Vector2Int targetSize;
+    public MouseTarget Target { get => target; set => target = value; }
+
+    protected override void Awake()
+    {
+        if (instance != null)
+        {
+            Debug.LogError("Only 1");
+            return;
+        }
+        instance = this;
+
+        this.previewImage = previewCanvas.GetComponentInChildren<Image>();
+    }
+
+    private void Update()
+    {
+        if (Input.GetKeyDown(KeyCode.Escape))
+        {
+            UIManager.Instance.CloseCurrentUI();
+        }
+
+        if (UIManager.Instance.curOpenUI != UIType.None) return;
+
+        input.x = Input.GetAxisRaw("Horizontal");
+        input.y = Input.GetAxisRaw("Vertical");
+
+        playerCtrl.PlayerMovement.Move(input);
+
+        playerCtrl.PlayerAction.HandleUpdate();
+
+        if (Input.inputString != null)
+        {
+            bool isNumber = int.TryParse(Input.inputString, out int number);
+            if (isNumber && number > 0 && number <= 9)
+            {
+                InventoryUI.Instance.ChangeSelectedSlot(number - 1);
+                playerCtrl.PlayerAction.lateAction += playerCtrl.PlayerAction.ChangeSelectedItem;
+            }
+        }
+
+        if (Input.GetKeyDown(KeyCode.E))
+        {
+            InteractWithObject();
+        }
+    }
+
+    private void FixedUpdate()
+    {
+        HandleMouseInteraction();
+    }
+
+    public void InteractWithObject()
+    {
+        // GameObject target = GetMouseTargetObject(true);
+        GameObject target = this.target.transform.parent.gameObject;
+        InteractableObjectCtrl ctrl = target.GetComponent<InteractableObjectCtrl>();
+        if (ctrl is MachineCtrl machineCtrl)
+        {
+            machineCtrl.MachineProfile.OpenMachineUI();
+        }
+    }
+
+    public void SetTileSelection(Vector3 position, int xSize = 1, int ySize = 1)
+    {
+        tileSelection.transform.position = new Vector3(Mathf.FloorToInt(position.x + 1), Mathf.FloorToInt(position.y), 0);
+        tileSelection.size = new Vector2(xSize, ySize);
+        tileSelection.gameObject.SetActive(true);
+    }
+
+    public void ToggleTileSelection(bool show)
+    {
+        tileSelection.gameObject.SetActive(show);
+    }
+
+    public void SetEInteractButton(bool show, Vector3? position = null)
+    {
+        if (show)
+            EInteractButton.transform.position = (Vector3)position;
+        EInteractButton.SetActive(show);
+    }
+
+    protected void HandleMouseInteraction()
+    {
+        BaseItemProfileSO baseItem = InventoryUI.Instance.GetSelectedItem();
+        InteractableItemProfileSO interactItem = baseItem as InteractableItemProfileSO;
+        TargetType targetType = interactItem != null ? interactItem.targetType : TargetType.Ground;
+
+        Vector3 mousePos = GetMousePosition();
+        RaycastHit2D[] hits = Physics2D.RaycastAll(mousePos, Vector2.zero);
+
+        bool hitted = false;
+
+        bool isUIOpen = UIManager.Instance.curOpenUI != UIType.None;
+
+        foreach (RaycastHit2D hit in hits)
+        {
+            bool isUiHit = hit.collider.gameObject.layer == LayerMask.NameToLayer("UI");
+            bool isMouseTargetTag = hit.collider.gameObject.CompareTag("MouseTarget");
+            bool isItemPickupableTag = hit.collider.gameObject.CompareTag("ItemPickupable");
+
+            if (isItemPickupableTag && !isUIOpen)
+            {
+                ItemPickupable itemPickupable = hit.collider.gameObject.GetComponent<ItemPickupable>();
+                itemPickupable?.Pick();
+            }
+
+            if (hitted) continue;
+
+            if (isMouseTargetTag)
+            {
+                hitted = true;
+
+                MouseTarget mouseTarget = hit.collider.gameObject.GetComponent<MouseTarget>();
+                if (mouseTarget != target) target = mouseTarget;
+                if (mouseTarget == null) continue;
+
+                if (isUiHit || targetType == TargetType.Resource || mouseTarget.isMachine)
+                {
+                    SetTileSelection(hit.collider.transform.parent.transform.position, (int)hit.collider.bounds.size.x, (int)hit.collider.bounds.size.y);
+                }
+                else ToggleTileSelection(false);
+
+                if (isUIOpen) continue;
+
+                if (mouseTarget.isMachine && !EInteractButton.activeSelf)
+                {
+                    Vector2 bottomRightCorner = hit.collider.bounds.min + new Vector3(hit.collider.bounds.size.x / 2, hit.collider.bounds.size.y + .5f, 0f);
+                    SetEInteractButton(true, bottomRightCorner);
+                }
+                else if (!mouseTarget.isMachine && EInteractButton.activeSelf) SetEInteractButton(false);
+            }
+        }
+
+        if (isUIOpen) return;
+
+        if (!hitted)
+        {
+            target = null;
+
+            if (EInteractButton.activeSelf) SetEInteractButton(false);
+
+            if (targetType == TargetType.Ground)
+            {
+                Vector3 snappedPoint = new Vector3(Mathf.FloorToInt(mousePos.x + 1), Mathf.FloorToInt(mousePos.y));
+                tileSelection.transform.position = snappedPoint;
+                if (interactItem is not null)
+                {
+                    tileSelection.size = new Vector2(interactItem.targetSize.x, interactItem.targetSize.y);
+                }
+                tileSelection.gameObject.SetActive(true);
+            }
+            else tileSelection.gameObject.SetActive(false);
+        }
+
+        UpdatePreviewAndPlacement(interactItem, mousePos);
+    }
+
+    protected void UpdatePreviewAndPlacement(InteractableItemProfileSO item, Vector3 mousePos)
+    {
+        if (item is PlaceableItemProfileSO placeableItem)
+        {
+            Vector3 previewPosition = new Vector3(Mathf.FloorToInt(mousePos.x + 1), Mathf.FloorToInt(mousePos.y), 0);
+
+            TogglePreviewCanvas(true);
+            UpdatePreviewSprite(placeableItem.previewSprite);
+            UpdatePreviewPosition(previewPosition);
+        }
+        else
+        {
+            TogglePreviewCanvas(false);
+        }
+    }
+
+    public GameObject GetMouseTargetObject(bool useMousePosition = true, float xPos = 0, float yPos = 0)
+    {
+        Vector3 mousePos = useMousePosition ? GetMousePosition() : new Vector3(xPos, yPos, 0);
+
+        RaycastHit2D[] hits = Physics2D.RaycastAll(mousePos, Vector2.zero);
+
+        foreach (RaycastHit2D hit in hits)
+        {
+            if (hit.collider.gameObject.CompareTag("MouseTarget")) return hit.collider.transform.parent.gameObject;
+        }
+
+        return null;
+    }
+
+    public Vector3 GetMousePosition()
+    {
+        Vector3 mousePos = Camera.main.ScreenToWorldPoint(Input.mousePosition);
+        mousePos.z = 0;
+        return mousePos;
+    }
+
+    private void UpdatePreviewSprite(Sprite sprite)
+    {
+        if (previewImage.sprite != sprite) previewImage.sprite = sprite;
+    }
+
+    private void UpdatePreviewPosition(Vector3 position)
+    {
+        if (previewCanvas.transform.position != position) previewCanvas.transform.position = position;
+    }
+
+    public void TogglePreviewCanvas(bool on)
+    {
+        if (on == previewCanvas.activeSelf) return;
+        previewCanvas.SetActive(on);
+    }
+}

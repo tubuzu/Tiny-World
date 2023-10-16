@@ -1,0 +1,14 @@
+[
+    {
+        "seedCode": "Tomato",
+        "unlocked": true
+    },
+    {
+        "seedCode": "Sapling",
+        "unlocked": true
+    },
+	{
+        "seedCode": "Carrot",
+        "unlocked": false
+    },
+]
